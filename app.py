@@ -2,12 +2,10 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import io
 
-st.set_page_config(page_title="燕巢-台北自動助手", layout="centered")
+st.set_page_config(page_title="燕巢-台北深度助手", layout="centered")
 
 def process_logic(content):
-    """解析 SCP 資料的核心邏輯"""
     clean_content = content.replace('+', ' ')
     elements = clean_content.split()
     final_rows = []
@@ -32,64 +30,64 @@ def process_logic(content):
             current_row.append(item)
     return final_rows
 
-def auto_fetch():
-    """模擬真實點擊下載的函數"""
+def deep_fetch():
     url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
     session = requests.Session()
-    # 偽裝成一般的電腦瀏覽器
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': url
     })
     
     try:
-        # 第一步：獲取網頁，拿到點擊動作必備的隱藏「門票」
-        r1 = session.get(url, timeout=15)
-        soup = BeautifulSoup(r1.text, 'html.parser')
+        # 第一步：進入頁面拿到門票
+        res1 = session.get(url, timeout=15)
+        soup = BeautifulSoup(res1.text, 'html.parser')
         
-        # 這些是點擊動作的關鍵參數
+        # 準備模擬點擊參數
+        # 注意：__EVENTTARGET 設為 btnDownload，直接跳過選單選取的動態限制
         payload = {
             '__VIEWSTATE': soup.find('input', {'name': '__VIEWSTATE'})['value'],
             '__VIEWSTATEGENERATOR': soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value'],
             '__EVENTVALIDATION': soup.find('input', {'name': '__EVENTVALIDATION'})['value'],
-            'ctl00$content$lstMarket': '104', # 台北
-            'ctl00$content$txtUnit': 'S00076', # 燕巢農會
-            'ctl00$content$rdoFileFormat': '4', # SCP格式
-            'ctl00$content$btnDownload': '下載' # 模擬點擊下載按鈕
+            'ctl00$content$lstMarket': '104',              # 台北
+            'ctl00$content$txtUnit': 'S00076',             # 直接填入代號 (嘗試繞過點擊選單)
+            'ctl00$content$rdoFileFormat': '4',            # SCP 格式
+            'ctl00$content$btnDownload': '下載(4碼品名代碼)'  # 模擬按下那個按鈕
         }
         
-        # 第二步：發送點擊信號
-        r2 = session.post(url, data=payload, timeout=20)
+        # 第二步：直接發送下載請求
+        res2 = session.post(url, data=payload, timeout=25)
         
-        if r2.status_code == 200 and "A11" in r2.text:
-            return r2.text
+        if res2.status_code == 200 and "A11" in res2.text:
+            return res2.text
         else:
             return None
     except Exception as e:
-        return f"Error: {e}"
+        return None
 
-# --- 網頁介面 ---
-st.title("🚀 燕巢-台北一鍵同步")
+# --- UI 介面 ---
+st.title("🍎 燕巢-台北深度同步")
+st.write("這會嘗試繞過網頁限制，直接點擊下載按鈕。")
 
-if st.button("🔴 點我自動抓取最新資料", use_container_width=True):
-    with st.spinner("正在模擬點擊下載中..."):
-        result = auto_fetch()
-        if result and not str(result).startswith("Error"):
-            st.session_state['data'] = result
+if st.button("🚀 執行深度抓取", use_container_width=True):
+    with st.spinner("模擬人工點擊中..."):
+        data_text = deep_fetch()
+        if data_text:
+            st.session_state['current_data'] = data_text
             st.success("同步成功！")
         else:
-            st.error("自動抓取失敗，可能是農委會網站阻擋了國外伺服器的模擬點擊。")
+            st.error("自動抓取受阻。原因：該網頁選單需要滑鼠實體點擊觸發 JS 腳本。")
 
-# 顯示區
-if 'data' in st.session_state:
-    df = pd.DataFrame(process_logic(st.session_state['data']))
-    if not df.empty:
+if 'current_data' in st.session_state:
+    results = process_logic(st.session_state['current_data'])
+    if results:
+        df = pd.DataFrame(results)
         st.divider()
         q = st.text_input("🔍 搜尋小代")
         if q: df = df[df['小代'].str.contains(q)]
         df = df.sort_values(by="單價", ascending=False)
-        
         st.dataframe(df, use_container_width=True, height=500)
         st.metric("總計件數", f"{df['件數'].sum()} 件")
 
 st.markdown("---")
-st.write("如果自動抓取失敗，請參考之前的『手動下載』方案。")
+st.caption("註：若持續失敗，建議使用我之前提供的『JavaScript 1秒下載書籤』，那是目前最強的破解法。")
