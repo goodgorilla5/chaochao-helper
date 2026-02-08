@@ -1,71 +1,67 @@
 import streamlit as st
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import time
 
-# 設定網頁標題與寬度
-st.set_page_config(page_title="燕巢台北對帳助手", layout="wide")
+st.set_page_config(page_title="燕巢台北終極助手", layout="centered")
 
-# 解析 SCP 的核心邏輯
 def parse_scp(content):
     rows = []
-    lines = content.split('\n')
-    for line in lines:
+    for line in content.split('\n'):
         if "F22" in line:
-            parts = line.replace('+', ' ').split()
+            p = line.replace('+', ' ').split()
             try:
-                # 提取：小代(3碼)、件數、公斤、單價、買家
-                rows.append({
-                    "小代": str(parts[3])[-3:], 
-                    "件數": int(parts[5].lstrip('0') or 0),
-                    "單價": int(parts[7].lstrip('0')[:-1] or 0),
-                    "買家": parts[-1]
-                })
+                rows.append({"小代": str(p[3])[-3:], "件數": int(p[5].lstrip('0') or 0), "單價": int(p[7].lstrip('0')[:-1] or 0), "買家": p[-1]})
             except: continue
     return rows
 
-# --- 側邊欄：操作教學 ---
-with st.sidebar:
-    st.header("⚡ 快速操作")
-    st.markdown("1. **點擊下方連結**前往農委會")
-    st.page_link("https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx", label="🔗 前往農委會下載頁", icon="🚀")
-    st.write("---")
-    st.write("2. **執行書籤** (填好 S00076)")
-    st.write("3. **回到這裡** 上傳檔案")
+def fetch_data():
+    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': 'https://amis.afa.gov.tw',
+        'Referer': url,
+    }
+    s = requests.Session()
+    try:
+        r1 = s.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r1.text, 'html.parser')
+        data = {
+            '__VIEWSTATE': soup.find('input', {'id': '__VIEWSTATE'})['value'],
+            '__VIEWSTATEGENERATOR': soup.find('input', {'id': '__VIEWSTATEGENERATOR'})['value'],
+            '__EVENTVALIDATION': soup.find('input', {'id': '__EVENTVALIDATION'})['value'],
+            'ctl00$contentPlaceHolder$txtSupplyNo': 'S00076 燕巢區農會',
+            'ctl00$contentPlaceHolder$hfldSupplyNo': 'S00076',
+            'ctl00$contentPlaceHolder$btnQuery2': '下載(4碼品名代碼)'
+        }
+        time.sleep(1) # 模擬真人思考時間
+        r2 = s.post(url, data=data, headers=headers, timeout=15)
+        if "A11" in r2.text: return r2.text
+        return None
+    except: return None
 
-# --- 主畫面 ---
-st.title("🍎 燕巢農會 - 現場對帳助手")
+st.title("🍎 燕巢-台北懶人自動化測試")
 
-# 這裡就是你想要的「抓取」按鈕：改為「檔案上傳器」
-# 只要檔案一丟進去，它就會自動「抓取」裡面的內容並輸出結果
-uploaded_file = st.file_uploader("📥 請將下載好的 SCP 檔案拖到這裡", type=['scp', 'txt'])
+if st.button("🚀 嘗試全自動抓取 (挑戰防火牆)"):
+    with st.spinner("正在偽裝成手機連線中..."):
+        res = fetch_data()
+        if res:
+            st.session_state['data'] = res
+            st.success("🎉 竟然成功了！這代表今天防火牆沒抓你！")
+        else:
+            st.error("❌ 還是被擋住了。這不是程式的問題，是「地理 IP」的問題。")
 
+uploaded_file = st.file_uploader("📂 手動上傳 (保險方案)", type=['scp', 'txt'])
 if uploaded_file:
-    # 自動抓取並解析
-    raw_text = uploaded_file.read().decode("utf-8", errors="ignore")
-    data = parse_scp(raw_text)
-    
-    if data:
-        df = pd.DataFrame(data)
-        
-        # 搜尋功能
-        st.subheader("🔍 快速對帳區")
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            search = st.text_input("搜尋小代 (後3碼)", placeholder="例如: 019")
-        
-        if search:
-            df = df[df['小代'].str.contains(search)]
-        
-        # 排序：單價高到低
-        df = df.sort_values(by="單價", ascending=False)
+    st.session_state['data'] = uploaded_file.read().decode("utf-8", errors="ignore")
 
-        # 顯示統計數據
-        total_q = df['件數'].sum()
-        st.success(f"✅ 抓取成功！目前畫面上共計: {total_q} 件")
-        
-        # 顯示大表格
-        st.dataframe(df, use_container_width=True, height=600)
-    else:
-        st.error("此檔案格式不正確，或不含台北市場 (F22) 的資料。")
-else:
-    # 沒上傳時顯示的歡迎畫面
-    st.info("👋 期待您的資料！請先從側邊欄下載檔案後上傳。")
+if 'data' in st.session_state:
+    df = pd.DataFrame(parse_scp(st.session_state['data']))
+    if not df.empty:
+        q = st.text_input("🔍 搜小代")
+        df = df[df['小代'].str.contains(q)] if q else df
+        st.dataframe(df.sort_values("單價", ascending=False), use_container_width=True)
+        st.metric("總件數", f"{df['件數'].sum()} 件")
