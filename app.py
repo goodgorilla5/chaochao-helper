@@ -1,67 +1,75 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import time
 
-st.set_page_config(page_title="燕巢台北終極助手", layout="centered")
+st.set_page_config(page_title="燕巢台北對帳助手", layout="centered")
 
-def parse_scp(content):
+# 解析邏輯 (保持穩定)
+def parse_scp_logic(content):
     rows = []
-    for line in content.split('\n'):
+    lines = content.split('\n')
+    for line in lines:
         if "F22" in line:
-            p = line.replace('+', ' ').split()
+            parts = line.replace('+', ' ').split()
             try:
-                rows.append({"小代": str(p[3])[-3:], "件數": int(p[5].lstrip('0') or 0), "單價": int(p[7].lstrip('0')[:-1] or 0), "買家": p[-1]})
+                rows.append({
+                    "小代": str(parts[3])[-3:],
+                    "件數": int(parts[5].lstrip('0') or 0),
+                    "單價": int(parts[7].lstrip('0')[:-1] or 0),
+                    "買家": parts[-1]
+                })
             except: continue
     return rows
 
-def fetch_data():
-    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Origin': 'https://amis.afa.gov.tw',
-        'Referer': url,
+st.title("🍎 燕巢農會對帳助手")
+
+# --- 第一步：聰明下載 ---
+st.subheader("第一步：獲取資料")
+
+# 這段代碼會直接執行你提供的那串 PostBack 指令
+download_script = """
+javascript:(function(){
+    var t=document.getElementById('ctl00_contentPlaceHolder_txtSupplyNo');
+    var h=document.getElementById('ctl00_contentPlaceHolder_hfldSupplyNo');
+    if(t && h){
+        t.value='S00076 燕巢區農會';
+        h.value='S00076';
+        /* 執行你提供的下載指令 */
+        WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$contentPlaceHolder$btnQuery2", "", true, "", "", false, true));
+    } else {
+        alert('請先開啟農委會下載頁面，並確保切換至電腦版網頁。');
     }
-    s = requests.Session()
-    try:
-        r1 = s.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r1.text, 'html.parser')
-        data = {
-            '__VIEWSTATE': soup.find('input', {'id': '__VIEWSTATE'})['value'],
-            '__VIEWSTATEGENERATOR': soup.find('input', {'id': '__VIEWSTATEGENERATOR'})['value'],
-            '__EVENTVALIDATION': soup.find('input', {'id': '__EVENTVALIDATION'})['value'],
-            'ctl00$contentPlaceHolder$txtSupplyNo': 'S00076 燕巢區農會',
-            'ctl00$contentPlaceHolder$hfldSupplyNo': 'S00076',
-            'ctl00$contentPlaceHolder$btnQuery2': '下載(4碼品名代碼)'
-        }
-        time.sleep(1) # 模擬真人思考時間
-        r2 = s.post(url, data=data, headers=headers, timeout=15)
-        if "A11" in r2.text: return r2.text
-        return None
-    except: return None
+})();
+"""
 
-st.title("🍎 燕巢-台北懶人自動化測試")
+st.info("💡 操作說明：\n1. 點擊下方按鈕前往農委會。\n2. 在該網頁點擊您的「燕巢下載書籤」。")
 
-if st.button("🚀 嘗試全自動抓取 (挑戰防火牆)"):
-    with st.spinner("正在偽裝成手機連線中..."):
-        res = fetch_data()
-        if res:
-            st.session_state['data'] = res
-            st.success("🎉 竟然成功了！這代表今天防火牆沒抓你！")
-        else:
-            st.error("❌ 還是被擋住了。這不是程式的問題，是「地理 IP」的問題。")
+st.page_link("https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx", label="🚀 開啟農委會下載網頁", icon="🌐")
 
-uploaded_file = st.file_uploader("📂 手動上傳 (保險方案)", type=['scp', 'txt'])
+with st.expander("📌 點我複製「燕巢專用下載書籤」代碼"):
+    st.code(download_script.replace('\n', ''))
+    st.caption("請將上方代碼存成瀏覽器書籤，名稱取名為『燕巢下載』")
+
+st.divider()
+
+# --- 第二步：分析 ---
+st.subheader("第二步：上傳檔案")
+uploaded_file = st.file_uploader("📂 選擇剛下載的 SCP/TXT 檔案", type=['scp', 'txt'])
+
 if uploaded_file:
-    st.session_state['data'] = uploaded_file.read().decode("utf-8", errors="ignore")
-
-if 'data' in st.session_state:
-    df = pd.DataFrame(parse_scp(st.session_state['data']))
-    if not df.empty:
-        q = st.text_input("🔍 搜小代")
-        df = df[df['小代'].str.contains(q)] if q else df
-        st.dataframe(df.sort_values("單價", ascending=False), use_container_width=True)
-        st.metric("總件數", f"{df['件數'].sum()} 件")
+    raw_text = uploaded_file.read().decode("utf-8", errors="ignore")
+    data = parse_scp_logic(raw_text)
+    
+    if data:
+        df = pd.DataFrame(data).sort_values("單價", ascending=False)
+        st.success("✅ 解析成功")
+        
+        search = st.text_input("🔍 搜尋小代 (後3碼)")
+        if search:
+            df = df[df['小代'].str.contains(search)]
+        
+        c1, c2 = st.columns(2)
+        c1.metric("總件數", f"{df['件數'].sum()} 件")
+        if not df.empty:
+            c2.metric("最高價", f"{df['單價'].max()} 元")
+        
+        st.dataframe(df, use_container_width=True, height=500)
