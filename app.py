@@ -1,76 +1,69 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
 
-st.set_page_config(page_title="燕巢自動對帳助手", layout="centered")
+st.set_page_config(page_title="燕巢台北對帳助手", layout="centered")
 
-def process_logic(content):
-    clean_content = content.replace('+', ' ')
-    elements = clean_content.split()
-    final_rows = []
-    current_row = []
-    for item in elements:
-        if item.startswith('A') and current_row:
-            if "F22" in current_row:
-                try:
-                    cleaned = {
-                        "小代": str(current_row[3])[-3:],
-                        "件數": int(current_row[5].lstrip('0') or 0),
-                        "單價": int(current_row[7].lstrip('0')[:-1] or 0),
-                        "買家": str(current_row[-1])
-                    }
-                    final_rows.append(cleaned)
-                except: pass
-            current_row = []
-        if len(item) > 3 and item[0:2].isdigit() and item[2].isalpha():
-            current_row.append(item[:2]); current_row.append(item[2:])
-        else:
-            current_row.append(item)
-    return final_rows
+# 核心解析邏輯
+def parse_scp(content):
+    rows = []
+    lines = content.split('\n')
+    for line in lines:
+        if "F22" in line:
+            parts = line.replace('+', ' ').split()
+            try:
+                rows.append({
+                    "小代": str(parts[3])[-3:], 
+                    "件數": int(parts[5].lstrip('0') or 0),
+                    "單價": int(parts[7].lstrip('0')[:-1] or 0),
+                    "買家": parts[-1]
+                })
+            except: continue
+    return rows
 
-def final_attempt_fetch():
-    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
-    session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-    try:
-        res1 = session.get(url, timeout=15)
-        soup = BeautifulSoup(res1.text, 'html.parser')
-        payload = {
-            '__VIEWSTATE': soup.find('input', {'id': '__VIEWSTATE'})['value'],
-            '__VIEWSTATEGENERATOR': soup.find('input', {'id': '__VIEWSTATEGENERATOR'})['value'],
-            '__EVENTVALIDATION': soup.find('input', {'id': '__EVENTVALIDATION'})['value'],
-            'ctl00$contentPlaceHolder$txtSupplyNo': 'S00076 燕巢區農會',
-            'ctl00$contentPlaceHolder$hfldSupplyNo': 'S00076',
-            'ctl00$contentPlaceHolder$btnQuery2': '下載(4碼品名代碼)'
-        }
-        res2 = session.post(url, data=payload, timeout=25)
-        if res2.status_code == 200 and "A11" in res2.text:
-            return res2.text
-        return None
-    except:
-        return None
+st.title("🍎 燕巢農會對帳系統")
 
-st.title("🍎 燕巢-台北全自動助手")
+# --- 第一步：聰明的下載按鈕 ---
+st.subheader("第一步：下載最新資料")
+st.info("請先點擊下方按鈕，會自動幫你跳轉並準備好下載。")
 
-if st.button("🔴 執行全自動抓取", use_container_width=True):
-    with st.spinner("正在根據新 ID 突破中..."):
-        data = final_attempt_fetch()
-        if data:
-            st.session_state['data'] = data
-            st.success("🎉 自動抓取成功！")
-        else:
-            st.error("自動抓取仍受阻。請用下方的『書籤法』。")
+# 這裡利用 HTML 建立一個直接連往農委會並帶有指令的提示
+amis_url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
+st.markdown(f"""
+    <a href="{amis_url}" target="_blank">
+        <button style="width:100%; height:60px; background-color:#ff4b4b; color:white; border:none; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer;">
+            🚀 開啟農委會下載頁面
+        </button>
+    </a>
+    <p style='color:gray; font-size:14px; margin-top:10px;'>
+        (註：進入後請確保切換至「電腦版網站」，並點擊書籤執行自動填寫)
+    </p>
+""", unsafe_allow_stdio=True)
 
-uploaded_file = st.file_uploader("📂 手動上傳 (備用)", type=['scp', 'txt'])
+st.divider()
+
+# --- 第二步：極速分析 ---
+st.subheader("第二步：查看對帳結果")
+uploaded_file = st.file_uploader("📂 請點此選擇剛下載的檔案", type=['scp', 'txt'])
+
 if uploaded_file:
-    st.session_state['data'] = uploaded_file.read().decode("utf-8", errors="ignore")
-
-if 'data' in st.session_state:
-    df = pd.DataFrame(process_logic(st.session_state['data']))
-    if not df.empty:
-        q = st.text_input("🔍 搜尋小代")
-        if q: df = df[df['小代'].str.contains(q)]
+    raw_text = uploaded_file.read().decode("utf-8", errors="ignore")
+    data = parse_scp(raw_text)
+    
+    if data:
+        df = pd.DataFrame(data)
+        
+        # 搜尋功能
+        search = st.text_input("🔍 搜尋小代編號", placeholder="輸入後三碼")
+        if search:
+            df = df[df['小代'].str.contains(search)]
+        
+        # 排序：高單價在前
         df = df.sort_values(by="單價", ascending=False)
-        st.dataframe(df, use_container_width=True, height=400)
-        st.metric("總計件數", f"{df['件數'].sum()} 件")
+        
+        # 統計資訊
+        st.metric("當前畫面總件數", f"{df['件數'].sum()} 件")
+        
+        # 表格大字體優化
+        st.dataframe(df, use_container_width=True, height=500)
+    else:
+        st.warning("檔案中找不到 F22 資料，請確認農委會下載時是否選對「台北市場」。")
