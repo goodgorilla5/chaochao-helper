@@ -14,40 +14,37 @@ def process_logic(content):
     grade_map = {"1": "特", "2": "優", "3": "良"}
     
     for line in raw_lines:
-        # 只鎖定 F22 且是燕巢農會 S00076
         if "F22" in line and "S00076" in line:
             try:
-                # --- 變通處理流水號：以日期格為基準 ---
-                # 定位日期格 (如 11502081)
+                # 定位日期格標記 (例如 11502081)
                 date_match = re.search(r"(\d{7,8}1)\s+\d{2}S00076", line)
                 
                 if date_match:
                     date_pos = date_match.start()
-                    # 1. 抓取日期前內容，消除空格合併成流水號
+                    # 抓取流水號並合併空格
                     raw_serial = line[:date_pos].strip()
                     serial = raw_serial.replace(" ", "")
                     
-                    # 2. 獲取剩餘資訊
                     remaining = line[date_pos:]
                     s_pos = remaining.find("S00076")
                     
-                    # 3. 抓取原本的「輪」並轉換為「等級」
-                    raw_turn = remaining[s_pos-2] # 取得 1, 2, 或 3
-                    level = grade_map.get(raw_turn, raw_turn) # 轉成 特, 優, 良
+                    # 抓取等級 (原本的輪)
+                    raw_turn = remaining[s_pos-2]
+                    level = grade_map.get(raw_turn, raw_turn)
                     
-                    # 4. 小代 (S00076 後面 3 位)
+                    # 小代
                     sub_id = remaining[s_pos+6:s_pos+9]
                     
-                    # 5. 處理 + 號數字塊
+                    # 處理數字塊
                     nums = line.split('+')
-                    pieces = int(nums[0][-3:].lstrip('0') or 0) # 件數
-                    weight = int(nums[1].lstrip('0') or 0)      # 公斤
+                    pieces = int(nums[0][-3:].lstrip('0') or 0)
+                    weight = int(nums[1].lstrip('0') or 0)
                     
-                    # 6. 單價修正：去掉最後一個 0 (如 00900 -> 90)
+                    # 單價 (去掉最後一個 0)
                     price_raw = nums[2].lstrip('0')
                     price = int(price_raw[:-1] if price_raw else 0)
                     
-                    # 7. 買家
+                    # 買家
                     buyer = nums[5].strip()[:4]
 
                     final_rows.append({
@@ -61,7 +58,6 @@ def process_logic(content):
                     })
             except:
                 continue
-                
     return final_rows
 
 st.title("🍎 燕巢-台北現場對帳")
@@ -86,23 +82,22 @@ if uploaded_file:
         with col2:
             sort_order = st.selectbox("排序單價", ["由高至低", "由低至高"])
 
-        # 過濾特定小代
         if search_query:
             df = df[df['小代'].str.contains(search_query)]
         
-        # 執行排序邏輯
         df = df.sort_values(by="單價", ascending=(sort_order == "由低至高"))
 
-        # --- 顯示區 ---
+        # --- 顯示區：控制欄位寬度 ---
         st.subheader("📋 交易資料清單")
         st.dataframe(
             df, 
             use_container_width=True, 
             height=500,
             column_config={
-                "流水號": st.column_config.TextColumn("流水號", width="large"),
+                "流水號": st.column_config.TextColumn("流水號", width="small"), # 縮小流水號
                 "等級": st.column_config.TextColumn("等級", width="small"),
-                "單價": st.column_config.NumberColumn("單價", format="%d 元"),
+                "小代": st.column_config.TextColumn("小代", width="small"),
+                "單價": st.column_config.NumberColumn("單價", format="%d 元", width="small"),
             }
         )
         
