@@ -14,34 +14,34 @@ def process_logic(content):
         # 只鎖定 F22 且是燕巢農會 S00076
         if "F22" in line and "S00076" in line:
             try:
-                # --- 核心邏輯：變通處理流水號 ---
-                # 我們不找 'A'，而是找日期格（例如 11502081）作為基準點
-                # 匹配格式：7位或8位數字最後帶個1（如 11502081）
-                date_pattern = r"\d{7,8}1"
-                match_date = re.search(date_pattern, line)
+                # --- 變通處理流水號：日期格之前的所有內容 ---
+                # 尋找日期格（例如 11502081 或 11502071）
+                # 邏輯：找到 S00076，往前找最近的一串 8 位數字且以 1 結尾的標記
+                date_match = re.search(r"(\d{7,8}1)\s+\d{2}S00076", line)
                 
-                if match_date:
-                    date_pos = match_date.start()
-                    # 日期格之前的所有內容就是流水號 (完整保留，包含空格)
-                    serial = line[:date_pos].strip()
+                if date_match:
+                    date_pos = date_match.start()
+                    # 1. 抓取日期前方的所有內容作為流水號
+                    raw_serial = line[:date_pos].strip()
+                    # 2. 消除中間所有空格，合併成完整長字串
+                    serial = raw_serial.replace(" ", "")
                     
-                    # 日期格之後的內容
+                    # 剩餘部分用來抓取其他資訊
                     remaining = line[date_pos:]
-                    
-                    # 輪：通常在日期格後的兩位數 (如 21S... 裡的 2)
-                    # 找到 S00076 的位置，往前推兩位就是輪和市場別
                     s_pos = remaining.find("S00076")
-                    turn = remaining[s_pos-2] # 取得 1, 2, 或 3
+                    
+                    # 輪：S00076 前兩位數的第一位 (例如 21S 裡的 2)
+                    turn = remaining[s_pos-2]
                     
                     # 小代：S00076 後面 3 位
                     sub_id = remaining[s_pos+6:s_pos+9]
                     
                     # 處理 + 號數字塊
                     nums = line.split('+')
-                    pieces = int(nums[0][-3:].lstrip('0') or 0) # 件數
-                    weight = int(nums[1].lstrip('0') or 0)      # 公斤
+                    pieces = int(nums[0][-3:].lstrip('0') or 0)
+                    weight = int(nums[1].lstrip('0') or 0)
                     
-                    # 單價修正：00900 -> 90 (去掉最後一個 0)
+                    # 單價修正：去掉最後一個 0 (如 00900 -> 90)
                     price_raw = nums[2].lstrip('0')
                     price = int(price_raw[:-1] if price_raw else 0)
                     
@@ -67,7 +67,7 @@ st.title("🍎 燕巢-台北現場對帳")
 uploaded_file = st.file_uploader("請上傳 SCP 檔案", type=['scp', 'txt', 'SCP'])
 
 if uploaded_file:
-    # 這裡建議用 big5 或 utf-8 嘗試讀取
+    # 嘗試不同編碼讀取
     try:
         content = uploaded_file.read().decode("big5", errors="ignore")
     except:
@@ -81,14 +81,12 @@ if uploaded_file:
         # --- 功能區：搜尋與排序 ---
         st.divider()
         col1, col2 = st.columns([1, 1])
-        
         with col1:
             search_query = st.text_input("🔍 搜尋小代", placeholder="輸入如 605")
-        
         with col2:
             sort_order = st.selectbox("排序單價", ["由高至低", "由低至高"])
 
-        # 執行過濾邏輯
+        # 過濾特定小代
         if search_query:
             df = df[df['小代'].str.contains(search_query)]
         
@@ -97,17 +95,17 @@ if uploaded_file:
 
         # --- 顯示區 ---
         st.subheader("📋 交易資料清單")
+        # 設定流水號欄位不被截斷
         st.dataframe(
             df, 
             use_container_width=True, 
-            height=400,
+            height=500,
             column_config={
-                "流水號": st.column_config.TextColumn("流水號", width="medium"),
+                "流水號": st.column_config.TextColumn("流水號", width="large"),
                 "單價": st.column_config.NumberColumn("單價", format="%d 元"),
             }
         )
         
-        # 顯示總結
         st.metric("當前 F22 總件數", f"{df['件數'].sum()} 件")
     else:
-        st.error("找不到 F22 資料，請確認檔案內容格式。")
+        st.error("找不到符合的 F22 資料。")
