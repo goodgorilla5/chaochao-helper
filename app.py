@@ -1,54 +1,112 @@
 import streamlit as st
 import pandas as pd
 import re
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
 
-# --- 根據書籤啟發的自動抓取邏輯 ---
-def auto_fetch_amis_v2():
-    now = datetime.now()
-    roc_date = f"{now.year - 1911}{now.strftime('%m%d')}"
-    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
+# 手機版優化
+st.set_page_config(page_title="燕巢台北市場助手", layout="centered")
+
+def process_logic(content):
+    # SCP 檔案每筆資料由四個空格區分
+    raw_lines = content.split('    ')
+    final_rows = []
+    # 等級對照：1=特, 2=優, 3=良
+    grade_map = {"1": "特", "2": "優", "3": "良"}
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": url
-    }
+    for line in raw_lines:
+        # 鎖定 F22 與 燕巢農會 S00076
+        if "F22" in line and "S00076" in line:
+            try:
+                # 定位日期標記 (例如 11502081)
+                date_match = re.search(r"(\d{7,8}1)\s+\d{2}S00076", line)
+                
+                if date_match:
+                    date_pos = date_match.start()
+                    # 1. 抓取日期前內容，消除空格合併成流水號
+                    raw_serial = line[:date_pos].strip()
+                    serial = raw_serial.replace(" ", "")
+                    
+                    remaining = line[date_pos:]
+                    s_pos = remaining.find("S00076")
+                    
+                    # 2. 轉換等級 (1,2,3 -> 特,優,良)
+                    raw_turn = remaining[s_pos-2]
+                    level = grade_map.get(raw_turn, raw_turn)
+                    
+                    # 3. 小代 (S00076 後面 3 位)
+                    sub_id = remaining[s_pos+6:s_pos+9]
+                    
+                    # 4. 處理數字塊
+                    nums = line.split('+')
+                    pieces = int(nums[0][-3:].lstrip('0') or 0)
+                    weight = int(nums[1].lstrip('0') or 0)
+                    
+                    # 5. 單價修正：00900 -> 90 (去掉最後一個 0)
+                    price_raw = nums[2].lstrip('0')
+                    price = int(price_raw[:-1] if price_raw else 0)
+                    
+                    # 6. 買家 (最後一個 + 號後的 4 位)
+                    buyer = nums[5].strip()[:4]
 
+                    final_rows.append({
+                        "流水號": serial, "等級": level, "小代": sub_id,
+                        "件數": pieces, "公斤": weight, "單價": price, "買家": buyer
+                    })
+            except:
+                continue
+    return final_rows
+
+st.title("🍎 燕巢-台北現場對帳")
+
+# 直接放置上傳按鈕，不再預設抓取，避免黑畫面
+uploaded_file = st.file_uploader("📂 請上傳 SCP 檔案", type=['scp', 'txt', 'SCP'])
+
+if uploaded_file:
     try:
-        session = requests.Session()
-        res1 = session.get(url, headers=headers)
-        soup = BeautifulSoup(res1.text, 'html.parser')
+        content = uploaded_file.read().decode("big5", errors="ignore")
+    except:
+        content = uploaded_file.read().decode("utf-8", errors="ignore")
         
-        # 抓取門票 (ViewState)
-        vs = soup.find('input', id='__VIEWSTATE')['value']
-        ev = soup.find('input', id='__EVENTVALIDATION')['value']
-        vg = soup.find('input', id='__VIEWSTATEGENERATOR')['value']
+    data = process_logic(content)
+    
+    if data:
+        df = pd.DataFrame(data)
 
-        # 模擬書籤的動作：填入隱藏欄位與按鈕觸發
-        payload = {
-            "__EVENTTARGET": "ctl00$contentPlaceHolder$btnQuery2", # 改用書籤裡的按鈕ID
-            "__EVENTARGUMENT": "",
-            "__VIEWSTATE": vs,
-            "__VIEWSTATEGENERATOR": vg,
-            "__EVENTVALIDATION": ev,
-            "ctl00$contentPlaceHolder$txtKeyWord": "S00076",
-            "ctl00$contentPlaceHolder$hfldSupplyNo": "S00076", # 書籤裡的關鍵隱藏欄位！
-            "ctl00$contentPlaceHolder$txtDate": roc_date,
-            "ctl00$contentPlaceHolder$rbtnList": "1"
-        }
+        st.divider()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            search_query = st.text_input("🔍 搜尋小代", placeholder="輸入如 605")
+        with col2:
+            sort_order = st.selectbox("排序單價", ["由高至低", "由低至高"])
+        with col3:
+            # 默認不勾選流水號
+            show_serial = st.checkbox("顯示流水號", value=False)
 
-        res2 = session.post(url, data=payload, headers=headers)
+        # 篩選小代
+        if search_query:
+            df = df[df['小代'].str.contains(search_query)]
         
-        # 檢查回傳內容是否為 SCP 格式 (特徵是包含 S00076)
-        content = res2.content.decode("big5", errors="ignore")
-        if "S00076" in content:
-            return content
-        else:
-            return None
-    except Exception as e:
-        st.error(f"連線異常: {e}")
-        return None
+        # 執行排序
+        df = df.sort_values(by="單價", ascending=(sort_order == "由低至高"))
 
-# ... (下方保留原本完美的 process_logic 與 Streamlit 介面) ...
+        # 控制顯示欄位
+        display_cols = ["等級", "小代", "件數", "公斤", "單價", "買家"]
+        if show_serial:
+            display_cols.insert(0, "流水號")
+
+        # 顯示清單
+        st.subheader("📋 交易資料清單")
+        st.dataframe(
+            df[display_cols], 
+            use_container_width=True, 
+            height=500,
+            column_config={
+                "流水號": st.column_config.TextColumn("流水號", width="small"),
+                "單價": st.column_config.NumberColumn("單價", format="%d 元"),
+            }
+        )
+        
+        st.metric("當前 F22 總件數", f"{df['件數'].sum()} 件")
+    else:
+        st.error("找不到符合的 F22 資料。")
+else:
+    st.info("💡 請使用書籤下載 SCP 後，點擊上方按鈕上傳。")
