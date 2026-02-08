@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import io
 
-# 1. 網頁基本設定
-st.set_page_config(page_title="燕巢-台北現場助手", layout="centered")
+st.set_page_config(page_title="燕巢-台北自動助手", layout="centered")
 
-# 2. 核心解析邏輯 (不變)
 def process_logic(content):
+    """解析 SCP 資料的核心邏輯"""
     clean_content = content.replace('+', ' ')
     elements = clean_content.split()
     final_rows = []
@@ -15,11 +17,11 @@ def process_logic(content):
             if "F22" in current_row:
                 try:
                     cleaned = {
-                        "小代": str(current_row[3])[-3:],             
-                        "件數": int(current_row[5].lstrip('0') or 0), 
-                        "公斤": int(current_row[6].lstrip('0') or 0), 
-                        "單價": int(current_row[7].lstrip('0')[:-1] or 0), 
-                        "買家": str(current_row[-1])                  
+                        "小代": str(current_row[3])[-3:],
+                        "件數": int(current_row[5].lstrip('0') or 0),
+                        "公斤": int(current_row[6].lstrip('0') or 0),
+                        "單價": int(current_row[7].lstrip('0')[:-1] or 0),
+                        "買家": str(current_row[-1])
                     }
                     final_rows.append(cleaned)
                 except: pass
@@ -30,44 +32,64 @@ def process_logic(content):
             current_row.append(item)
     return final_rows
 
-# --- 3. 網頁介面 ---
-st.title("🍎 燕巢-台北現場助手")
-
-# 強化的手機下載教學
-with st.expander("🚨 手機找不到下載專區？請看這裏", expanded=True):
-    st.error("手機版網頁會隱藏下載功能，請務必執行以下動作：")
-    st.write("1. 點擊瀏覽器選單 (Chrome點三個點 / Safari點AA)")
-    st.write("2. 勾選 **『切換電腦版網站』**")
-    st.write("3. 看到電腦畫面後，選 **資料下載** > **蔬果共同運銷資料下載**")
-    st.markdown("[👉 點我前往下載頁 (記得切換電腦版)](https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx)")
-
-
-
-# 上傳區塊
-uploaded_file = st.file_uploader("📂 下載完成後，請點此處上傳 SCP 檔案", type=['scp', 'txt'])
-
-if uploaded_file:
-    content = uploaded_file.read().decode("utf-8", errors="ignore")
-    data = process_logic(content)
+def auto_fetch():
+    """模擬真實點擊下載的函數"""
+    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
+    session = requests.Session()
+    # 偽裝成一般的電腦瀏覽器
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
     
-    if data:
-        df = pd.DataFrame(data)
+    try:
+        # 第一步：獲取網頁，拿到點擊動作必備的隱藏「門票」
+        r1 = session.get(url, timeout=15)
+        soup = BeautifulSoup(r1.text, 'html.parser')
+        
+        # 這些是點擊動作的關鍵參數
+        payload = {
+            '__VIEWSTATE': soup.find('input', {'name': '__VIEWSTATE'})['value'],
+            '__VIEWSTATEGENERATOR': soup.find('input', {'name': '__VIEWSTATEGENERATOR'})['value'],
+            '__EVENTVALIDATION': soup.find('input', {'name': '__EVENTVALIDATION'})['value'],
+            'ctl00$content$lstMarket': '104', # 台北
+            'ctl00$content$txtUnit': 'S00076', # 燕巢農會
+            'ctl00$content$rdoFileFormat': '4', # SCP格式
+            'ctl00$content$btnDownload': '下載' # 模擬點擊下載按鈕
+        }
+        
+        # 第二步：發送點擊信號
+        r2 = session.post(url, data=payload, timeout=20)
+        
+        if r2.status_code == 200 and "A11" in r2.text:
+            return r2.text
+        else:
+            return None
+    except Exception as e:
+        return f"Error: {e}"
+
+# --- 網頁介面 ---
+st.title("🚀 燕巢-台北一鍵同步")
+
+if st.button("🔴 點我自動抓取最新資料", use_container_width=True):
+    with st.spinner("正在模擬點擊下載中..."):
+        result = auto_fetch()
+        if result and not str(result).startswith("Error"):
+            st.session_state['data'] = result
+            st.success("同步成功！")
+        else:
+            st.error("自動抓取失敗，可能是農委會網站阻擋了國外伺服器的模擬點擊。")
+
+# 顯示區
+if 'data' in st.session_state:
+    df = pd.DataFrame(process_logic(st.session_state['data']))
+    if not df.empty:
         st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            q = st.text_input("🔍 搜尋小代", placeholder="輸入後3碼")
-        with col2:
-            sort_opt = st.selectbox("單價排序", ["高 → 低", "低 → 高"])
-
-        if q:
-            df = df[df['小代'].str.contains(q)]
-        df = df.sort_values(by="單價", ascending=(sort_opt == "低 → 高"))
-
-        # 大表格顯示
+        q = st.text_input("🔍 搜尋小代")
+        if q: df = df[df['小代'].str.contains(q)]
+        df = df.sort_values(by="單價", ascending=False)
+        
         st.dataframe(df, use_container_width=True, height=500)
-        st.metric("當前畫面總件數", f"{df['件數'].sum()} 件")
-    else:
-        st.error("檔案內找不到 F22 資料，請確認是否選錯檔案。")
+        st.metric("總計件數", f"{df['件數'].sum()} 件")
 
 st.markdown("---")
-st.caption("燕巢農會台北市場專用工具")
+st.write("如果自動抓取失敗，請參考之前的『手動下載』方案。")
