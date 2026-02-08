@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="燕巢台北對帳助手", layout="centered")
 
@@ -25,9 +26,19 @@ st.title("🍎 燕巢農會對帳助手")
 # --- 第一步：下載區 ---
 st.subheader("第一步：下載最新資料")
 
-# 修正後的 HTML 區塊，解決縮進報錯問題
 amis_url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
-st.markdown(f'<a href="{amis_url}" target="_blank"><button style="width:100%; height:60px; background-color:#ff4b4b; color:white; border:none; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer;">🚀 開啟農委會下載頁面</button></a>', unsafe_allow_stdio=True)
+
+# 使用 HTML Component 來避開 markdown 報錯，這能確保按鈕 100% 顯示
+components.html(
+    f"""
+    <a href="{amis_url}" target="_blank" style="text-decoration: none;">
+        <button style="width:100%; height:60px; background-color:#ff4b4b; color:white; border:none; border-radius:10px; font-size:20px; font-weight:bold; cursor:pointer; font-family: sans-serif;">
+            🚀 開啟農委會下載頁面
+        </button>
+    </a>
+    """,
+    height=80,
+)
 
 with st.expander("📌 點我複製「一鍵填寫」書籤代碼"):
     st.write("請複製下方代碼，存入手機書籤：")
