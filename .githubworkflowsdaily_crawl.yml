@@ -1,0 +1,33 @@
+name: Daily Market Data Scraper
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # 每天凌晨一點自動跑 (UTC)
+  workflow_dispatch: # 也可以手動點擊執行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 pandas
+
+      - name: Run Scraper
+        run: python main.py
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Auto-update market data $(date)"
+          git push
