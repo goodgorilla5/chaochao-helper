@@ -72,4 +72,40 @@ if uploaded_file:
     try:
         content = uploaded_file.read().decode("big5", errors="ignore")
     except:
-        content = uploaded_file.read().decode("utf-8", errors="ignore
+        content = uploaded_file.read().decode("utf-8", errors="ignore")
+        
+    data = process_logic(content)
+    
+    if data:
+        df = pd.DataFrame(data)
+
+        st.divider()
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            search_query = st.text_input("🔍 搜尋小代", placeholder="輸入如 605")
+        with col2:
+            sort_order = st.selectbox("排序單價", ["由高至低", "由低至高"])
+
+        # 過濾特定小代
+        if search_query:
+            df = df[df['小代'].str.contains(search_query)]
+        
+        # 執行排序邏輯
+        df = df.sort_values(by="單價", ascending=(sort_order == "由低至高"))
+
+        # --- 顯示區 ---
+        st.subheader("📋 交易資料清單")
+        st.dataframe(
+            df, 
+            use_container_width=True, 
+            height=500,
+            column_config={
+                "流水號": st.column_config.TextColumn("流水號", width="large"),
+                "等級": st.column_config.TextColumn("等級", width="small"),
+                "單價": st.column_config.NumberColumn("單價", format="%d 元"),
+            }
+        )
+        
+        st.metric("當前 F22 總件數", f"{df['件數'].sum()} 件")
+    else:
+        st.error("找不到符合的 F22 資料。")
