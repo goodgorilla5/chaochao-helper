@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-import datetime
+import os
+import glob
 import time
 
-st.set_page_config(page_title="燕巢台北對帳-強韌版", layout="wide")
+st.set_page_config(page_title="燕巢台北對帳-本地秒開版", layout="wide")
 
-# 解析邏輯保持不變...
-def parse_scp_content(content):
+# 解析邏輯 (維持最強兼容性)
+def parse_scp_logic(content):
     final_rows = []
     lines = content.split('\n')
     for line in lines:
@@ -25,72 +24,50 @@ def parse_scp_content(content):
             except: continue
     return final_rows
 
-@st.cache_data(ttl=600) # 縮短快取到10分鐘，確保數據夠新
-def get_latest_data():
-    url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
-    # 更完整的 Header，偽裝成一般的 Chrome 瀏覽器
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://amis.afa.gov.tw/"
-    }
-    
-    session = requests.Session()
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        try:
-            # 1. 獲取通行證，增加 timeout 到 30 秒
-            res = session.get(url, headers=headers, timeout=30)
-            res.raise_for_status()
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            payload = {
-                "__VIEWSTATE": soup.find("input", {"id": "__VIEWSTATE"})['value'],
-                "__VIEWSTATEGENERATOR": soup.find("input", {"id": "__VIEWSTATEGENERATOR"})['value'],
-                "__EVENTVALIDATION": soup.find("input", {"id": "__EVENTVALIDATION"})['value'],
-                "ctl00$contentPlaceHolder$txtSupplyNo": "S00076 燕巢區農會",
-                "ctl00$contentPlaceHolder$hfldSupplyNo": "S00076",
-                "ctl00$contentPlaceHolder$btnQuery2": "4碼品名代碼" 
-            }
-            
-            # 2. 請求數據
-            post_res = session.post(url, data=payload, headers=headers, timeout=30)
-            if "F22" in post_res.text:
-                return parse_scp_content(post_res.text)
-            else:
-                return [] # 沒資料但不算錯誤
-                
-        except (requests.exceptions.RequestException, Exception) as e:
-            if attempt < max_retries - 1:
-                time.sleep(2) # 失敗後等 2 秒再試
-                continue
-            return f"連線農委會超時，請檢查網路或稍後再試。原因: {e}"
-
-# --- 主程式 ---
 st.title("🍎 燕巢農會 - 台北對帳自動看板")
 
-# 提供手動刷新的按鈕（以防快取沒更新）
-if st.sidebar.button("🔄 強制重新整理數據"):
-    st.cache_data.clear()
-    st.rerun()
+# --- 側邊欄：手動上傳或說明 ---
+st.sidebar.header("⚙️ 系統設定")
+amis_url = "https://amis.afa.gov.tw/download/DownloadVegFruitCoopData2.aspx"
+st.sidebar.markdown(f"[🔗 點我開啟農委會下載頁]({amis_url})")
+st.sidebar.info("💡 只要把下載好的檔案丟進電腦的『燕巢對帳系統』資料夾，網頁就會自動更新。")
 
-with st.spinner("🚀 正在努力穿透網路連線至農委會..."):
-    data = get_latest_data()
+# --- 自動偵測資料夾內的檔案 ---
+# 尋找當前目錄下最新的 txt 或 scp 檔案
+target_files = glob.glob("*.txt") + glob.glob("*.scp")
 
-# (後續顯示邏輯同前一版...)
-if isinstance(data, list):
+if target_files:
+    # 抓最新的一份
+    latest_file = max(target_files, key=os.path.getmtime)
+    file_mtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(latest_file)))
+    
+    st.success(f"📅 自動讀取最新檔案：`{latest_file}` (存檔時間：{file_mtime})")
+
+    with open(latest_file, 'r', encoding='utf-8', errors='ignore') as f:
+        data = parse_scp_logic(f.read())
+
     if data:
-        df = pd.DataFrame(data).sort_values(by="單價", ascending=False)
-        # 顯示指標...
-        t1, t2, t3 = st.columns(3)
-        t1.metric("今日總件數", f"{df['件數'].sum()} 件")
-        t2.metric("最高價", f"{df['單價'].max()} 元")
-        t3.metric("總公斤", f"{df['公斤'].sum()}")
+        df = pd.DataFrame(data).sort_values("單價", ascending=False)
+        
+        # 指標顯示
+        c1, c2, c3 = st.columns(3)
+        c1.metric("總件數", f"{df['件數'].sum()} 件")
+        c2.metric("最高單價", f"{df['單價'].max()} 元")
+        c3.metric("總公斤", f"{df['公斤'].sum()} kg")
+
         st.divider()
+        
+        # 快速搜尋
+        search = st.text_input("🔍 快速搜尋小代後 3 碼 (例如: 025)")
+        if search:
+            df = df[df['小代'].str.contains(search)]
+
         st.dataframe(df, use_container_width=True, height=600)
     else:
-        st.warning("⚠️ 目前農委會尚未產出今日資料（請於中午左右查看）。")
+        st.warning("⚠️ 檔案讀取成功，但裡面沒有台北 F22 的資料。")
 else:
-    st.error(data)
+    st.error("❌ 資料夾內找不到任何資料檔案 (.txt 或 .scp)")
+    st.info("請先手動下載一份檔案放到『燕巢對帳系統』資料夾內。")
+
+st.markdown("---")
+st.caption("本網頁自動同步電腦資料夾檔案 | 無須重複連線農委會")
